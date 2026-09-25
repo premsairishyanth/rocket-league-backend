@@ -60,7 +60,7 @@ export class Match {
     for (let i = 0; i < 2; i++) stepCar(this.cars[i], now - this.inputAt[i] < 300 ? this.inputs[i] : {}, dt);
     collideCars(...this.cars);
     for (const car of this.cars) { resolveCarArena(car); collideCarBall(car, this.ball); }
-    const goal = stepBall(this.ball, dt);
+    const goal = stepBall(this.ball, dt, this.cars);
     if (goal) { this.scores[goal === 'home' ? 0 : 1]++; this.goalTeam = goal; this.phase = 'goal'; this.phaseTime = 3.8; }
     else if (this.remaining <= 0) this.phase = 'finished';
     for (const pad of this.pads) {

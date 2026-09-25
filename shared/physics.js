@@ -97,24 +97,41 @@ export function resolveCarArena(car) {
     car.pitch=support.pitch;car.roll=support.roll;car.pitchRate=0;car.yawRate=0;car.rollRate=0;
   }else car.grounded=false;
 }
-export function collideCarBall(car, ball) {
+// Sphere against the oriented chassis, including a ball already inside the box.
+export function carBallContact(car, ball) {
   const frame=carFrame(car),d=[ball.x-car.x-frame.up[0]*.5,ball.y-car.y-frame.up[1]*.5,ball.z-car.z-frame.up[2]*.5];
   const dot=a=>a.reduce((v,n,i)=>v+n*d[i],0);
-  const lx=dot(frame.right),ly=dot(frame.up),lz=-dot(frame.forward);
-  let nx=lx-clamp(lx,-1.24,1.24),ny=ly-clamp(ly,-.62,.72),nz=lz-clamp(lz,-1.98,1.98);
-  let distance=Math.hypot(nx,ny,nz);
-  if(distance>=FIELD.ballRadius)return 0;
-  if(distance<.00001){nx=0;ny=0;nz=lz>=0?1:-1;distance=1;}
-  else{nx/=distance;ny/=distance;nz/=distance;}
-  const n=frame.right.map((v,i)=>v*nx+frame.up[i]*ny-frame.forward[i]*nz);
-  const [worldX,worldY,worldZ]=n;
-  const overlap=Math.max(0,FIELD.ballRadius-distance)+.001;
-  ball.x+=worldX*overlap;ball.y+=worldY*overlap;ball.z+=worldZ*overlap;
+  const local=[dot(frame.right),dot(frame.up),-dot(frame.forward)];
+  const low=[-1.24,-.62,-1.98],high=[1.24,.72,1.98];
+  const normal=local.map((v,i)=>v-clamp(v,low[i],high[i]));
+  const distance=Math.hypot(...normal);
+  if(distance>=FIELD.ballRadius)return null;
+  let depth=FIELD.ballRadius-distance;
+  if(distance<.00001){
+    let nearest=Infinity,axis=0,sign=1;
+    for(let i=0;i<3;i++)for(const side of [-1,1]){
+      const gap=side<0?local[i]-low[i]:high[i]-local[i];
+      if(gap<nearest){nearest=gap;axis=i;sign=side;}
+    }
+    normal.fill(0);normal[axis]=sign;depth=FIELD.ballRadius+nearest;
+  }else for(let i=0;i<3;i++)normal[i]/=distance;
+  const n=frame.right.map((v,i)=>v*normal[0]+frame.up[i]*normal[1]-frame.forward[i]*normal[2]);
+  return {normal:n,depth:depth+.001};
+}
+export function separateCarBall(car,ball){
+  const contact=carBallContact(car,ball);if(!contact)return false;
+  ball.x+=contact.normal[0]*contact.depth;ball.y+=contact.normal[1]*contact.depth;ball.z+=contact.normal[2]*contact.depth;
+  return true;
+}
+export function collideCarBall(car, ball) {
+  const contact=carBallContact(car,ball);if(!contact)return 0;
+  const [worldX,worldY,worldZ]=contact.normal;
+  ball.x+=worldX*contact.depth;ball.y+=worldY*contact.depth;ball.z+=worldZ*contact.depth;
   const closing=(car.vx-ball.vx)*worldX+(car.vy-ball.vy)*worldY+(car.vz-ball.vz)*worldZ;
   if(closing<=.05)return 0;
-  const groundedHit=car.grounded&&!car.wall&&ball.y<car.y+2;
+  const groundedHit=car.grounded&&!car.wall&&ball.y<car.y+2&&Math.abs(worldY)<.3;
   const restitution=car.boosting||car.flip>0?.2:.06;
-  const impulse=Math.min(48,closing*(1+restitution));
+  const impulse=closing*(1+restitution);
   ball.vx+=worldX*impulse;ball.vy+=worldY*impulse;ball.vz+=worldZ*impulse;
   if(groundedHit) {
     // Low taps roll; fast shots get a small predictable hop rather than a huge lob.
@@ -173,13 +190,35 @@ function reflect(body,nx,ny,nz,restitution,settleSpeed) {
   const impulse=-speed*(Math.abs(speed)>settleSpeed?1+restitution:1);
   body.vx+=nx*impulse;body.vy+=ny*impulse;body.vz+=nz*impulse;
 }
-export function stepBall(ball,dt) {
+export function stepBall(ball,dt,cars=[],onHit=()=>{}) {
   // Substeps protect goalposts and corners even when this function gets a larger dt.
-  const steps=Math.max(1,Math.ceil(dt/(1/120))),h=dt/steps,r=FIELD.ballRadius;
+  const steps=Math.max(1,Math.ceil(dt/(1/120)),Math.ceil(Math.hypot(ball.vx,ball.vy,ball.vz)*dt/(FIELD.ballRadius*.4))),h=dt/steps,r=FIELD.ballRadius;
   for(let i=0;i<steps;i++) {
     ball.vy-=22*h;
     ball.x+=ball.vx*h;ball.y+=ball.vy*h;ball.z+=ball.vz*h;
     resolveBallArena(ball);
+    // Resolve after integration, before snapshots/scoring. Revisit contacts when
+    // another car or the floor pushes the ball back into a chassis.
+    for(let pass=0;pass<8;pass++){
+      let touched=false;
+      for(const car of cars){
+        if(!carBallContact(car,ball))continue;
+        touched=true;const strength=collideCarBall(car,ball);if(strength)onHit(car,strength);
+      }
+      if(!touched)break;
+      resolveBallArena(ball);
+    }
+    // Two opposing chassis can leave no room for the sphere between them.
+    // Release that pinch above both roofs instead of alternating penetration.
+    if(cars.length>1&&cars.some(car=>carBallContact(car,ball))){
+      let roof=ball.y;
+      for(const car of cars){
+        if(Math.hypot(ball.x-car.x,ball.z-car.z)>4.5)continue;
+        const frame=carFrame(car);
+        roof=Math.max(roof,car.y+frame.up[1]*.55+Math.abs(frame.right[1])*1.24+Math.abs(frame.up[1])*.67+Math.abs(frame.forward[1])*1.98+FIELD.ballRadius+.002);
+      }
+      ball.y=Math.min(24-FIELD.ballRadius,roof);ball.vy=Math.max(0,ball.vy);
+    }
     const surface=surfaceAt(ball.x,ball.z);
     const rolling=(ball.y-surface.height)*surface.ny<r+.04;
     const drag=Math.exp(-(rolling?.48:.12)*h);ball.vx*=drag;ball.vz*=drag;
