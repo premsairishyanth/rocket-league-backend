@@ -23,6 +23,16 @@ export function jumpCar(car) {
   }
   return false;
 }
+// Digital steering ramps in gently; release and counter-steer respond faster.
+function steeringResponse(car,target,speed,drift,dt){
+  const current=car.steer||0;
+  const rate=target===0?26:current*target<0?22:12;
+  car.steer=current+(target-current)*(1-Math.exp(-rate*dt));
+  if(target===0&&Math.abs(car.steer)<.002)car.steer=0;
+  const fast=clamp((speed-10)/33,0,1);
+  const power=drift?2.1-fast*.45:1.8-fast*.75;
+  return car.steer*power*clamp(speed/5,0,1);
+}
 export function stepCar(car, input, dt) {
   const throttle = clamp(input.throttle || 0, -1, 1), steer = clamp(input.steer || 0, -1, 1);
   car.wallCooldown=Math.max(0,(car.wallCooldown||0)-dt);
@@ -31,10 +41,8 @@ export function stepCar(car, input, dt) {
   const forwardX = Math.sin(car.yaw), forwardZ = -Math.cos(car.yaw);
   let forwardSpeed = car.vx * forwardX + car.vz * forwardZ;
   const speed = Math.hypot(car.vx, car.vz);
-  const steeringPower = input.drift ? 2.5 : 1.65;
   const direction = forwardSpeed < -1 ? -1 : 1;
-  car.yaw += steer * steeringPower * clamp(speed / 6, .12, 1) * direction * dt;
-  car.steer += (steer - car.steer) * Math.min(1, dt * 10);
+  car.yaw += steeringResponse(car,steer,speed,input.drift,dt)*direction*dt;
   car.boosting = !!input.boost && car.boost > 0;
   const acceleration = throttle * (car.grounded ? 24 : 7) + (car.boosting ? 38 : 0);
   car.vx += Math.sin(car.yaw) * acceleration * dt;
@@ -43,7 +51,7 @@ export function stepCar(car, input, dt) {
   // Remove lateral slip gradually; drifting deliberately preserves momentum.
   const lateralX = Math.cos(car.yaw), lateralZ = Math.sin(car.yaw);
   const lateralSpeed = car.vx * lateralX + car.vz * lateralZ;
-  const grip = car.grounded ? (input.drift ? 1.5 : 10) : .6;
+  const grip = input.drift ? 3.8 : steer===0 ? 18 : 14;
   const gripFactor = 1 - Math.exp(-grip * dt);
   car.vx -= lateralX * lateralSpeed * gripFactor;
   car.vz -= lateralZ * lateralSpeed * gripFactor;
@@ -281,13 +289,12 @@ function stepWallCar(car,input,dt){
   // steering to the chassis' right direction, just as on the ground.
   const handedness=w.axis==='x'?w.sign:-w.sign;
   const direction=travel<-1?-1:1;
-  w.heading+=steer*handedness*(input.drift?2.5:1.65)*clamp(Math.abs(travel)/6,.12,1)*direction*dt;
-  car.steer+=(steer-car.steer)*(1-Math.exp(-10*dt));
+  w.heading+=steeringResponse(car,steer,Math.abs(travel),input.drift,dt)*handedness*direction*dt;
   car.boosting=!!input.boost&&car.boost>0;car.boost=clamp(car.boost+(car.boosting?-26:8)*dt,0,100);
   const acceleration=throttle*24+(car.boosting?38:0);
   w.speed+=(Math.cos(w.heading)*acceleration-22*Math.sin(w.angle))*dt;
   car['v'+tangent]+=Math.sin(w.heading)*acceleration*dt;
-  const lateral=car['v'+tangent]*Math.cos(w.heading)-w.speed*Math.sin(w.heading),grip=1-Math.exp(-(input.drift?1.5:10)*dt);
+  const lateral=car['v'+tangent]*Math.cos(w.heading)-w.speed*Math.sin(w.heading),grip=1-Math.exp(-(input.drift?3.8:steer===0?18:14)*dt);
   car['v'+tangent]-=lateral*Math.cos(w.heading)*grip;w.speed+=lateral*Math.sin(w.heading)*grip;
   const damping=Math.exp(-(throttle||car.boosting?.25:1.3)*dt);
   w.speed*=damping;car['v'+tangent]*=damping;
