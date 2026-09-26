@@ -42,6 +42,10 @@ export function createGameServer({ origins = [], maxRooms = 100, maxConnections 
       catch { ws.close(1008,'Invalid message'); return; }
       const requestId = typeof message.requestId === 'number' ? message.requestId : undefined;
       try {
+        if(message.type==='ping'){
+          if(Number.isSafeInteger(message.pingId)&&(!ws.pingAt||now-ws.pingAt>=1000)){ws.pingAt=now;send(ws,{type:'pong',pingId:message.pingId});}
+          return;
+        }
         if (message.type === 'input') {
           if (ws.room) ws.room.input(ws.slot, message.input ?? {}, now); return;
         }

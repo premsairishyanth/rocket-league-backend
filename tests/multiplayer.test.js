@@ -49,6 +49,7 @@ test('real sockets create, discover, join, synchronize, reject full rooms, and c
   b.send({type:'list',requestId:1});const list=await b.wait(m=>m.type==='rooms');assert.equal(list.rooms[0].id,joined.roomId);
   // Distinct client avoids command throttling while testing a simultaneous join.
   c.send({type:'join',roomId:joined.roomId});const second=await c.wait(m=>m.type==='joined');assert.equal(second.slot,1);
+  a.send({type:'ping',pingId:42});const pong=await a.wait(m=>m.type==='pong');assert.equal(pong.pingId,42);
   const states=await Promise.all([a,c].map(x=>x.wait(m=>m.type==='state'&&m.phase==='countdown')));assert.deepEqual(states[0].scores,states[1].scores);assert.deepEqual(states[0].cars,states[1].cars);
   await new Promise(r=>setTimeout(r,160));b.send({type:'join',roomId:joined.roomId});assert.match((await b.wait(m=>m.type==='error')).message,/full/);
   const room=app.rooms.get(joined.roomId);room.phase='playing';a.send({type:'input',input:{throttle:1,boost:true}});
