@@ -32,12 +32,12 @@ export function jumpCar(car, input = {}) {
 // Digital steering ramps in gently; release and counter-steer respond faster.
 function steeringResponse(car,target,speed,drift,dt){
   const current=car.steer||0;
-  const rate=target===0?26:current*target<0?22:12;
+  const rate=target===0?32:current*target<0?34:18;
   car.steer=current+(target-current)*(1-Math.exp(-rate*dt));
   if(target===0&&Math.abs(car.steer)<.002)car.steer=0;
   const fast=clamp((speed-10)/33,0,1);
-  const power=drift?2.1-fast*.45:1.8-fast*.75;
-  return car.steer*power*clamp(speed/5,0,1);
+  const power=drift?2.85-fast*.5:2.6-fast*.65;
+  return car.steer*power*clamp(speed/3,0,1);
 }
 export function stepCar(car, input, dt) {
   const throttle = clamp(input.throttle || 0, -1, 1), steer = clamp(input.steer || 0, -1, 1);
@@ -57,7 +57,7 @@ export function stepCar(car, input, dt) {
   // Remove lateral slip gradually; drifting deliberately preserves momentum.
   const lateralX = Math.cos(car.yaw), lateralZ = Math.sin(car.yaw);
   const lateralSpeed = car.vx * lateralX + car.vz * lateralZ;
-  const grip = input.drift ? 3.8 : steer===0 ? 18 : 14;
+  const grip = input.drift ? 3.8 : 20;
   const gripFactor = 1 - Math.exp(-grip * dt);
   car.vx -= lateralX * lateralSpeed * gripFactor;
   car.vz -= lateralZ * lateralSpeed * gripFactor;
@@ -311,7 +311,7 @@ function stepWallCar(car,input,dt){
   const acceleration=throttle*24+(car.boosting?38:0);
   w.speed+=(Math.cos(w.heading)*acceleration-22*Math.sin(w.angle))*dt;
   car['v'+tangent]+=Math.sin(w.heading)*acceleration*dt;
-  const lateral=car['v'+tangent]*Math.cos(w.heading)-w.speed*Math.sin(w.heading),grip=1-Math.exp(-(input.drift?3.8:steer===0?18:14)*dt);
+  const lateral=car['v'+tangent]*Math.cos(w.heading)-w.speed*Math.sin(w.heading),grip=1-Math.exp(-(input.drift?3.8:20)*dt);
   car['v'+tangent]-=lateral*Math.cos(w.heading)*grip;w.speed+=lateral*Math.sin(w.heading)*grip;
   const damping=Math.exp(-(throttle||car.boosting?.25:1.3)*dt);
   w.speed*=damping;car['v'+tangent]*=damping;
