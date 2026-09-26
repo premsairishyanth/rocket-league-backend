@@ -7,8 +7,8 @@ export const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 export function makeCar(z = FIELD.halfLength*.52, yaw = 0) {
   return { x: 0, y: .65, z, vx: 0, vy: 0, vz: 0, yaw, boost: 100, grounded: true, jumps: 0, flip: 0, steer: 0, boosting: false, hitCooldown: 0, pitch: 0, roll: 0, wall: null, wallCooldown: 0, pitchRate: 0, yawRate: 0, rollRate: 0 };
 }
-export function makeBall() { return { x: 0, y: FIELD.ballRadius, z: 0, vx: 0, vy: 0, vz: 0, hitFlash: 0, lastTouch: null }; }
-export function jumpCar(car) {
+export function makeBall() { return { x: 0, y: FIELD.ballRadius, z: 0, vx: 0, vy: 0, vz: 0, hitFlash: 0, hitId: 0, hitPower: 0, lastTouch: null }; }
+export function jumpCar(car, input = {}) {
   if(car.wall){
     const frame=carFrame(car);car.vx+=frame.up[0]*11;car.vy+=frame.up[1]*11+2;car.vz+=frame.up[2]*11;
     car.pitch=Math.asin(clamp(frame.forward[1],-.98,.98));
@@ -18,8 +18,14 @@ export function jumpCar(car) {
   }
   if (car.grounded) { car.pitch=clamp(car.pitch,-.12,.18);car.pitchRate=0;car.yawRate=0;car.rollRate=0;car.vy = 10.8; car.grounded = false; car.jumps = 1; return true; }
   if (car.jumps === 1) {
-    const f=carFrame(car).forward;car.vy = Math.max(car.vy, 5)+f[1]*8; car.vx += f[0]*12; car.vz += f[2]*12;
-    car.jumps = 2; car.flip = .52; return true;
+    // A neutral second jump gives height for an aerial. Holding drive commits
+    // to a forward/backward dodge in the direction the chassis is pointing.
+    const drive=clamp(input.throttle||0,-1,1),f=carFrame(car).forward;
+    if(Math.abs(drive)>.2){
+      car.vy=Math.max(car.vy,3)+f[1]*10*drive;
+      car.vx+=f[0]*13*drive;car.vz+=f[2]*13*drive;car.flip=.52;
+    }else{car.vy=Math.max(car.vy,0)+8.5;car.flip=0;}
+    car.jumps = 2; return true;
   }
   return false;
 }
@@ -138,9 +144,19 @@ export function collideCarBall(car, ball) {
   const closing=(car.vx-ball.vx)*worldX+(car.vy-ball.vy)*worldY+(car.vz-ball.vz)*worldZ;
   if(closing<=.05)return 0;
   const groundedHit=car.grounded&&!car.wall&&ball.y<car.y+2&&Math.abs(worldY)<.3;
-  const restitution=car.boosting||car.flip>0?.2:.06;
+  // Keep dribble touches soft; committed hits have a clearer rebound.
+  const commitment=clamp((closing-8)/24,0,1);
+  const restitution=.06+commitment*(car.flip>0?.34:car.boosting?.24:.14);
   const impulse=closing*(1+restitution);
   ball.vx+=worldX*impulse;ball.vy+=worldY*impulse;ball.vz+=worldZ*impulse;
+  if(!car.grounded||car.wall){
+    // Transfer a bounded fraction of tangential chassis motion on aerial hits.
+    const normalSpeed=car.vx*worldX+car.vy*worldY+car.vz*worldZ;
+    const carry=.12*clamp(closing/8,0,1);
+    ball.vx+=(car.vx-normalSpeed*worldX)*carry;
+    ball.vy+=(car.vy-normalSpeed*worldY)*carry;
+    ball.vz+=(car.vz-normalSpeed*worldZ)*carry;
+  }
   if(groundedHit) {
     // Low taps roll; fast shots get a small predictable hop rather than a huge lob.
     const lift=car.boosting?clamp((closing-12)*.10,0,3):clamp((closing-16)*.07,0,1.2);
@@ -150,7 +166,8 @@ export function collideCarBall(car, ball) {
   if(speed>46){const f=46/speed;ball.vx*=f;ball.vy*=f;ball.vz*=f;}
   car.vx-=worldX*impulse*.055;car.vz-=worldZ*impulse*.055;
   ball.hitFlash=1;ball.lastTouch=car.team||'home';
-  const feedback=car.hitCooldown<=0?impulse:0;car.hitCooldown=.1;
+  const feedback=car.hitCooldown<=0?Math.max(1.8,impulse):0;
+  if(feedback){ball.hitId=(ball.hitId||0)+1;ball.hitPower=feedback;car.hitCooldown=.1;}
   return feedback;
 }
 export function collideCars(a, b) {
@@ -322,8 +339,8 @@ function stepAerialCar(car,input,dt){
   const pitchAcceleration=(targetPitch-car.pitch)*34-(car.pitchRate||0)*11;
   car.pitchRate=clamp((car.pitchRate||0)+pitchAcceleration*dt,-2.8,2.8);
   car.pitch=clamp(car.pitch+car.pitchRate*dt,-1.45,1.45);
-  const turnTarget=input.drift?0:steer*1.7;
-  car.yawRate=(car.yawRate||0)+(turnTarget-(car.yawRate||0))*(1-Math.exp(-10*dt));
+  const turnTarget=input.drift?0:steer*2.05;
+  car.yawRate=(car.yawRate||0)+(turnTarget-(car.yawRate||0))*(1-Math.exp(-(steer?12:16)*dt));
   car.yaw+=car.yawRate*dt;
   if(input.drift){car.rollRate=(car.rollRate||0)+(steer*2.6-(car.rollRate||0))*(1-Math.exp(-10*dt));car.roll=wrapAngle(car.roll+car.rollRate*dt);}
   else{car.rollRate=0;car.roll=wrapAngle(car.roll)*Math.exp(-5*dt);}

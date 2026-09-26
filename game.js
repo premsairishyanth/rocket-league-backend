@@ -38,7 +38,7 @@ export class Match {
       if (this.rematchVotes.every(Boolean)) this.reset();
     }
     if (this.phase !== 'playing') return;
-    if (action === 'jump') jumpCar(this.cars[slot]);
+    if (action === 'jump') jumpCar(this.cars[slot], this.inputs[slot]);
     if (action === 'reset') {
       const old = this.cars[slot];
       this.cars[slot] = makeCar(slot ? -FIELD.halfLength * .52 : FIELD.halfLength * .52, slot ? Math.PI : 0);
